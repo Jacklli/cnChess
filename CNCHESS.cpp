@@ -893,7 +893,7 @@ static int SearchFull(int vlAlpha, int vlBeta, int nDepth) {
   // 4. 逐一走这些走法，并进行递归
   for (i = 0; i < nGenMoves; i ++) {
     if (pos.MakeMove(mvs[i], pcCaptured)) {
-      vl = -SearchFull(-vlBeta, -vlAlpha, nDepth - 1);
+      vl = -SearchFull(-vlBeta, -vlAlpha, nDepth - 1);	//vl是当前局面按照nDepth步数走下来的评价得分，递归调用，递归的深度为nDepth大小，递归的出口是nDepth==0
       pos.UndoMakeMove(mvs[i], pcCaptured);
 
       // 5. 进行Alpha-Beta大小判断和截断
@@ -911,7 +911,7 @@ static int SearchFull(int vlAlpha, int vlBeta, int nDepth) {
     }
   }
 
-  // 5. 所有走法都搜索完了，把最佳走法(不能是Alpha走法)保存到历史表，返回最佳值
+  // 5. 当前所有走法的得分情况都搜索完了，把最佳走法(不能是Alpha走法，如果是Alpha走法就不用保存)保存到历史表，返回最佳值
   if (vlBest == -MATE_VALUE) {
     // 如果是杀棋，就根据杀棋步数给出评价
     return pos.nDistance - MATE_VALUE;
@@ -921,13 +921,13 @@ static int SearchFull(int vlAlpha, int vlBeta, int nDepth) {
     Search.nHistoryTable[mvBest] += nDepth * nDepth;
     if (pos.nDistance == 0) {
       // 搜索根节点时，总是有一个最佳走法(因为全窗口搜索不会超出边界)，将这个走法保存下来
-      Search.mvResult = mvBest;	//debug here
+      Search.mvResult = mvBest;
     }
   }
   return vlBest;
 }
 
-// 迭代加深搜索过程
+// 搜索着法1 —— 非迭代加深算法
 static void SearchMain(void) {
   int i, t, vl;
 
@@ -944,7 +944,30 @@ static void SearchMain(void) {
       break;
     }
     // 超过1000毫秒，就终止搜索
-    if (clock() - t > CLOCKS_PER_SEC/2) {
+    if (clock() - t > CLOCKS_PER_SEC) {
+      break;
+    }
+  }
+}
+
+// 搜索着法 —— 迭代加深搜索算法
+static void SearchMainRec(void) {
+  int i, t, vl;
+
+  // 初始化
+  memset(Search.nHistoryTable, 0, 65536 * sizeof(int)); // 清空历史表
+  t = clock();       // 初始化定时器
+  pos.nDistance = 0; // 初始步数
+
+  // 迭代加深过程
+  for (i = 1; i <= LIMIT_DEPTH; i ++) {
+    vl = SearchFull(-MATE_VALUE, MATE_VALUE, i);
+    //搜索到杀棋，就终止搜索
+    if (vl > WIN_VALUE || vl < -WIN_VALUE) {
+      break;
+    }
+    // 超过1000毫秒，就终止搜索
+    if (clock() - t > CLOCKS_PER_SEC) {
       break;
     }
   }
@@ -1075,12 +1098,40 @@ static void DrawSquare(int sq, BOOL bSelected = FALSE) {
   }
 }
 
+static void ResponseMoveRec(void);  //申明ResponseMoveRec函数，不声明会报编译错误
+
 // 电脑回应一步棋
 static void ResponseMove(void) {
   int pcCaptured;
   // 电脑走一步棋
   SetCursor((HCURSOR) LoadImage(NULL, IDC_WAIT, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
   SearchMain();
+  SetCursor((HCURSOR) LoadImage(NULL, IDC_ARROW, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+  pos.MakeMove(Search.mvResult, pcCaptured);
+  // 清除上一步棋的选择标记
+  DrawSquare(SRC(cnChess.mvLast));
+  DrawSquare(DST(cnChess.mvLast));
+  // 把电脑走的棋标记出来
+  cnChess.mvLast = Search.mvResult;
+  DrawSquare(SRC(cnChess.mvLast), DRAW_SELECTED);
+  DrawSquare(DST(cnChess.mvLast), DRAW_SELECTED);
+  if (pos.IsMate()) {
+    // 如果分出胜负，那么播放胜负的声音，并且弹出不带声音的提示框
+    PlayResWav(IDR_LOSS);
+    MessageBoxMute("请再接再厉！");
+  } else {
+    // 如果没有分出胜负，那么播放将军、吃子或一般走子的声音
+    PlayResWav(pos.Checked() ? IDR_CHECK2 : pcCaptured != 0 ? IDR_CAPTURE2 : IDR_MOVE2);
+	ResponseMoveRec();	//象棋自己与自己
+  }
+}
+
+// 电脑回应一步棋
+static void ResponseMoveRec(void) {
+  int pcCaptured;
+  // 电脑走一步棋
+  SetCursor((HCURSOR) LoadImage(NULL, IDC_WAIT, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+  SearchMainRec();
   SetCursor((HCURSOR) LoadImage(NULL, IDC_ARROW, IMAGE_CURSOR, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
   pos.MakeMove(Search.mvResult, pcCaptured);
   // 清除上一步棋的选择标记
@@ -1294,8 +1345,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
   //获取窗体尺寸
   GetWindowRect(cnChess.hWnd,&rect);
   //设置窗体居中
-  SetWindowPos(cnChess.hWnd,HWND_TOPMOST,(scrWidth-rect.right)/2,(scrHeight-rect.bottom)/2,rect.right-rect.left,rect.bottom-rect.top,SWP_SHOWWINDOW);
-
+  //SetWindowPos(cnChess.hWnd,HWND_TOPMOST,(scrWidth-rect.right)/2,(scrHeight-rect.bottom)/2,rect.right-rect.left,rect.bottom-rect.top,SWP_SHOWWINDOW);
+  SetWindowPos(cnChess.hWnd,HWND_TOPMOST,scrWidth-rect.right,(scrHeight-rect.bottom)/2,rect.right-rect.left,rect.bottom-rect.top,SWP_SHOWWINDOW);
   ShowWindow(cnChess.hWnd, nCmdShow);
   UpdateWindow(cnChess.hWnd);
 
@@ -1313,10 +1364,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 
   // 接收消息
-  //while (GetMessage(&msg, NULL, 0, 0)) {
-  //  TranslateMessage(&msg);
-  //  DispatchMessage(&msg);
-  //}
+  while (GetMessage(&msg, NULL, 0, 0)) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
  
   return 1;
 }
